@@ -719,6 +719,8 @@ void handleLeftButton() {
         return;
     }
 
+    startButtonSfx();
+
     if(shinAnimationPlayed == false){
         shin1_Animation(ui_Image6, 0);
         shinAnimationPlayed = true;
@@ -742,6 +744,8 @@ void handleRightButton() {
     if (lv_scr_act() == ui_Screen1) {
         return;
     }
+
+    startButtonSfx();
 
     if(shin2AnimationPlayed == false){
         shin1_Animation(ui_Image7, 0);
@@ -768,9 +772,6 @@ void pollPhysicalButtons() {
 
     if (lastLeftBtnState == HIGH && currentLeftBtnState == LOW) {
         if (now - lastLeftBtnPressTime > debounceMs) {
-            if (lv_scr_act() != ui_Screen1) {
-                startButtonSfx();
-            }
             handleLeftButton();
             lastLeftBtnPressTime = now;
         }
@@ -778,9 +779,6 @@ void pollPhysicalButtons() {
 
     if (lastRightBtnState == HIGH && currentRightBtnState == LOW) {
         if (now - lastRightBtnPressTime > debounceMs) {
-            if (lv_scr_act() != ui_Screen1) {
-                startButtonSfx();
-            }
             handleRightButton();
             lastRightBtnPressTime = now;
         }
