@@ -72,6 +72,16 @@ unsigned long buttonSfxStepStartMs = 0;
 bool buttonSfxInGap = false;
 uint16_t shepardPhase = 0;
 
+static const uint16_t winSfxFreqs[] = {1047, 1319, 1568, 2093}; // C6 E6 G6 C7
+static const uint16_t winSfxDurationsMs[] = {80, 80, 100, 220};
+static constexpr uint8_t winSfxStepCount = sizeof(winSfxFreqs) / sizeof(winSfxFreqs[0]);
+static constexpr uint16_t winSfxGapMs = 14;
+
+bool winSfxActive = false;
+uint8_t winSfxStep = 0;
+unsigned long winSfxStepStartMs = 0;
+bool winSfxInGap = false;
+
 // -----------------------------------------------------------------------------
 // ikuMeter game state
 // -----------------------------------------------------------------------------
@@ -156,6 +166,9 @@ uint16_t getShepardFrequency(uint8_t stepInPress);
 void startButtonSfx();
 void stopButtonSfx();
 void updateButtonSfx();
+void startWinSfx();
+void stopWinSfx();
+void updateWinSfx();
 
 void resetShin(){
     
@@ -193,6 +206,28 @@ void stopButtonSfx() {
     buttonSfxActive = false;
     buttonSfxInGap = false;
     buttonSfxStep = 0;
+}
+
+void stopWinSfx() {
+    if (winSfxActive) {
+        writeSfxTone(0);
+    }
+
+    winSfxActive = false;
+    winSfxInGap = false;
+    winSfxStep = 0;
+}
+
+void startWinSfx() {
+    stopWinSfx();
+    stopButtonSfx();
+
+    winSfxActive = true;
+    winSfxStep = 0;
+    winSfxInGap = false;
+    winSfxStepStartMs = millis();
+
+    writeSfxTone(winSfxFreqs[0]);
 }
 
 uint16_t getShepardFrequency(uint8_t stepInPress) {
@@ -257,6 +292,42 @@ void updateButtonSfx() {
     writeSfxTone(getShepardFrequency(buttonSfxStep));
 }
 
+void updateWinSfx() {
+    if (!winSfxActive) {
+        return;
+    }
+
+    unsigned long now = millis();
+
+    if (!winSfxInGap) {
+        if (now - winSfxStepStartMs < winSfxDurationsMs[winSfxStep]) {
+            return;
+        }
+
+        writeSfxTone(0);
+
+        winSfxInGap = true;
+        winSfxStepStartMs = now;
+        return;
+    }
+
+    if (now - winSfxStepStartMs < winSfxGapMs) {
+        return;
+    }
+
+    winSfxStep++;
+
+    if (winSfxStep >= winSfxStepCount) {
+        stopWinSfx();
+        return;
+    }
+
+    winSfxInGap = false;
+    winSfxStepStartMs = now;
+
+    writeSfxTone(winSfxFreqs[winSfxStep]);
+}
+
 void finalizeScreen2Time() {
     if (screen2TimerRunning) {
         totalScreen2TimeMs += millis() - screen2StartTime;
@@ -266,6 +337,7 @@ void finalizeScreen2Time() {
 
 void resetGameData() {
     stopFireworks();
+    stopWinSfx();
 
     ikuValue = 0;
     lastDecayTime = millis();
@@ -579,6 +651,7 @@ void triggerWinState() {
     Serial.println("WIN");
 
     lv_scr_load(ui_Screen3);
+    startWinSfx();
     startFireworks();
 }
 
@@ -745,6 +818,7 @@ void loop() {
     updateScreenTimers();
     pollPhysicalButtons();
     updateButtonSfx();
+    updateWinSfx();
 
     if (lv_scr_act() == ui_Screen2 && !gameWon) {
         unsigned long currentDecayInterval = getDecayInterval();
