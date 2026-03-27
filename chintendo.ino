@@ -54,15 +54,53 @@ const unsigned long debounceMs = 120;
 // -----------------------------------------------------------------------------
 static constexpr uint8_t SFX_PWM_PIN = 7;
 
-static const uint16_t buttonSfxFreqs[] = {1319, 1568, 2093};
-static const uint16_t buttonSfxDurationsMs[] = {28, 28, 44};
-static constexpr uint8_t buttonSfxStepCount = sizeof(buttonSfxFreqs) / sizeof(buttonSfxFreqs[0]);
+// Cute Shepard-style rising illusion: use a bright major-pentatonic contour so
+// each press feels sweeter while still giving an "always climbing" intensity.
+static constexpr float SHEPARD_BASE_HZ = 261.63f; // C4
+static constexpr uint8_t SHEPARD_NOTES_PER_OCTAVE = 12;
+static constexpr uint8_t SHEPARD_OCTAVE_SPAN = 3;
+static constexpr uint8_t buttonSfxStepCount = 4;
+static constexpr uint8_t buttonSfxScaleStride = 1;
+static constexpr uint8_t SHEPARD_SCALE_LENGTH = 5;
+static constexpr uint8_t SHEPARD_CUTE_SCALE[SHEPARD_SCALE_LENGTH] = {0, 2, 4, 7, 9}; // major pentatonic
+static constexpr uint16_t buttonSfxStepDurationMs = 22;
 static constexpr uint16_t buttonSfxGapMs = 8;
 
 bool buttonSfxActive = false;
 uint8_t buttonSfxStep = 0;
 unsigned long buttonSfxStepStartMs = 0;
 bool buttonSfxInGap = false;
+uint16_t shepardPhase = 0;
+
+// Longer, more melodic victory phrase (C major) with a held resolving note.
+static const uint16_t winSfxFreqs[] = {
+    784,  // G5
+    880,  // A5
+    1047, // C6
+    1175, // D6
+    1319, // E6
+    1175, // D6
+    1568, // G6
+    2093  // C7
+};
+static const uint16_t winSfxDurationsMs[] = {90, 90, 110, 110, 130, 110, 150, 320};
+static constexpr uint8_t winSfxStepCount = sizeof(winSfxFreqs) / sizeof(winSfxFreqs[0]);
+static constexpr uint16_t winSfxGapMs = 16;
+
+bool winSfxActive = false;
+uint8_t winSfxStep = 0;
+unsigned long winSfxStepStartMs = 0;
+bool winSfxInGap = false;
+
+static const uint16_t coinSfxFreqs[] = {1568, 2093}; // Game Boy-like "coin" chirp
+static const uint16_t coinSfxDurationsMs[] = {70, 190};
+static constexpr uint8_t coinSfxStepCount = sizeof(coinSfxFreqs) / sizeof(coinSfxFreqs[0]);
+static constexpr uint16_t coinSfxGapMs = 20;
+
+bool coinSfxActive = false;
+uint8_t coinSfxStep = 0;
+unsigned long coinSfxStepStartMs = 0;
+bool coinSfxInGap = false;
 
 // -----------------------------------------------------------------------------
 // ikuMeter game state
@@ -95,6 +133,9 @@ bool shin2AnimationPlayed = false;
 
 bool screen2TimerRunning = false;
 bool screen3TimerStarted = false;
+bool screen1TimerStarted = false;
+unsigned long screen1EnterTime = 0;
+bool screen1CoinPlayed = false;
 
 
 
@@ -144,9 +185,16 @@ void handleScreen3Restart();
 void finalizeScreen2Time();
 void maybePlayGanAnimation(int previousValue);
 void maybePlayCloseAnimation(int previousValue);
+uint16_t getShepardFrequency(uint8_t stepInPress);
 void startButtonSfx();
 void stopButtonSfx();
 void updateButtonSfx();
+void startWinSfx();
+void stopWinSfx();
+void updateWinSfx();
+void startCoinSfx();
+void stopCoinSfx();
+void updateCoinSfx();
 
 void resetShin(){
     
@@ -186,15 +234,79 @@ void stopButtonSfx() {
     buttonSfxStep = 0;
 }
 
-void startButtonSfx() {
+void stopWinSfx() {
+    if (winSfxActive) {
+        writeSfxTone(0);
+    }
+
+    winSfxActive = false;
+    winSfxInGap = false;
+    winSfxStep = 0;
+}
+
+void startWinSfx() {
+    stopWinSfx();
     stopButtonSfx();
+
+    winSfxActive = true;
+    winSfxStep = 0;
+    winSfxInGap = false;
+    winSfxStepStartMs = millis();
+
+    writeSfxTone(winSfxFreqs[0]);
+}
+
+void stopCoinSfx() {
+    if (coinSfxActive) {
+        writeSfxTone(0);
+    }
+
+    coinSfxActive = false;
+    coinSfxInGap = false;
+    coinSfxStep = 0;
+}
+
+void startCoinSfx() {
+    stopCoinSfx();
+    stopButtonSfx();
+    stopWinSfx();
+
+    coinSfxActive = true;
+    coinSfxStep = 0;
+    coinSfxInGap = false;
+    coinSfxStepStartMs = millis();
+
+    writeSfxTone(coinSfxFreqs[0]);
+}
+
+uint16_t getShepardFrequency(uint8_t stepInPress) {
+    const uint16_t noteIndex = shepardPhase + (stepInPress * buttonSfxScaleStride);
+    const uint8_t octave = (noteIndex / SHEPARD_SCALE_LENGTH) % SHEPARD_OCTAVE_SPAN;
+    const uint8_t scaleIndex = noteIndex % SHEPARD_SCALE_LENGTH;
+    const float semitones = static_cast<float>(SHEPARD_CUTE_SCALE[scaleIndex] + (octave * SHEPARD_NOTES_PER_OCTAVE));
+    const float frequency = SHEPARD_BASE_HZ * powf(2.0f, semitones / SHEPARD_NOTES_PER_OCTAVE);
+
+    return static_cast<uint16_t>(roundf(frequency));
+}
+
+void startButtonSfx() {
+    if (lv_scr_act() != ui_Screen2 || gameWon) {
+        return;
+    }
+
+    // Don't restart while a tone is already running; let the current SFX
+    // finish so rapid button mashing doesn't chop/cut off the sound.
+    if (buttonSfxActive) {
+        return;
+    }
 
     buttonSfxActive = true;
     buttonSfxStep = 0;
     buttonSfxInGap = false;
     buttonSfxStepStartMs = millis();
 
-    writeSfxTone(buttonSfxFreqs[0]);
+    shepardPhase = (shepardPhase + 1) % (SHEPARD_SCALE_LENGTH * SHEPARD_OCTAVE_SPAN);
+    writeSfxTone(getShepardFrequency(0));
 }
 
 void updateButtonSfx() {
@@ -205,7 +317,7 @@ void updateButtonSfx() {
     unsigned long now = millis();
 
     if (!buttonSfxInGap) {
-        if (now - buttonSfxStepStartMs < buttonSfxDurationsMs[buttonSfxStep]) {
+        if (now - buttonSfxStepStartMs < buttonSfxStepDurationMs) {
             return;
         }
 
@@ -230,7 +342,79 @@ void updateButtonSfx() {
     buttonSfxInGap = false;
     buttonSfxStepStartMs = now;
 
-    writeSfxTone(buttonSfxFreqs[buttonSfxStep]);
+    writeSfxTone(getShepardFrequency(buttonSfxStep));
+}
+
+void updateWinSfx() {
+    if (!winSfxActive) {
+        return;
+    }
+
+    unsigned long now = millis();
+
+    if (!winSfxInGap) {
+        if (now - winSfxStepStartMs < winSfxDurationsMs[winSfxStep]) {
+            return;
+        }
+
+        writeSfxTone(0);
+
+        winSfxInGap = true;
+        winSfxStepStartMs = now;
+        return;
+    }
+
+    if (now - winSfxStepStartMs < winSfxGapMs) {
+        return;
+    }
+
+    winSfxStep++;
+
+    if (winSfxStep >= winSfxStepCount) {
+        stopWinSfx();
+        return;
+    }
+
+    winSfxInGap = false;
+    winSfxStepStartMs = now;
+
+    writeSfxTone(winSfxFreqs[winSfxStep]);
+}
+
+void updateCoinSfx() {
+    if (!coinSfxActive) {
+        return;
+    }
+
+    unsigned long now = millis();
+
+    if (!coinSfxInGap) {
+        if (now - coinSfxStepStartMs < coinSfxDurationsMs[coinSfxStep]) {
+            return;
+        }
+
+        writeSfxTone(0);
+
+        coinSfxInGap = true;
+        coinSfxStepStartMs = now;
+        return;
+    }
+
+    if (now - coinSfxStepStartMs < coinSfxGapMs) {
+        return;
+    }
+
+    coinSfxStep++;
+
+    if (coinSfxStep >= coinSfxStepCount) {
+        stopCoinSfx();
+        return;
+    }
+
+    coinSfxInGap = false;
+    coinSfxStepStartMs = now;
+
+    writeSfxTone(coinSfxFreqs[coinSfxStep]);
 }
 
 void finalizeScreen2Time() {
@@ -242,6 +426,8 @@ void finalizeScreen2Time() {
 
 void resetGameData() {
     stopFireworks();
+    stopWinSfx();
+    stopCoinSfx();
 
     ikuValue = 0;
     lastDecayTime = millis();
@@ -376,6 +562,20 @@ unsigned long getDecayInterval() {
 
 void updateScreenTimers() {
     lv_obj_t* activeScreen = lv_scr_act();
+
+    if (activeScreen == ui_Screen1) {
+        if (!screen1TimerStarted) {
+            screen1EnterTime = millis();
+            screen1TimerStarted = true;
+            screen1CoinPlayed = false;
+        } else if (!screen1CoinPlayed && millis() - screen1EnterTime >= 1000) {
+            startCoinSfx();
+            screen1CoinPlayed = true;
+        }
+    } else {
+        screen1TimerStarted = false;
+        stopCoinSfx();
+    }
 
     if (activeScreen == ui_Screen2) {
         if (!screen2TimerRunning) {
@@ -555,6 +755,7 @@ void triggerWinState() {
     Serial.println("WIN");
 
     lv_scr_load(ui_Screen3);
+    startWinSfx();
     startFireworks();
 }
 
@@ -721,6 +922,8 @@ void loop() {
     updateScreenTimers();
     pollPhysicalButtons();
     updateButtonSfx();
+    updateWinSfx();
+    updateCoinSfx();
 
     if (lv_scr_act() == ui_Screen2 && !gameWon) {
         unsigned long currentDecayInterval = getDecayInterval();
