@@ -55,15 +55,20 @@ const unsigned long debounceMs = 120;
 // -----------------------------------------------------------------------------
 static constexpr uint8_t SFX_PWM_PIN = 7;
 
-static const uint16_t buttonSfxFreqs[] = {1319, 1568, 2093};
-static const uint16_t buttonSfxDurationsMs[] = {28, 28, 44};
-static constexpr uint8_t buttonSfxStepCount = sizeof(buttonSfxFreqs) / sizeof(buttonSfxFreqs[0]);
+static const uint16_t shepardFreqs[] = {
+    1319, 1397, 1480, 1568, 1661, 1760, 1865, 1976, 2093, 2217, 2349, 2489
+};
+static constexpr uint8_t shepardFreqCount = sizeof(shepardFreqs) / sizeof(shepardFreqs[0]);
 static constexpr uint16_t buttonSfxGapMs = 8;
 
 bool buttonSfxActive = false;
 uint8_t buttonSfxStep = 0;
 unsigned long buttonSfxStepStartMs = 0;
 bool buttonSfxInGap = false;
+uint8_t buttonSfxSequenceLength = 4;
+uint8_t shepardStepOffset = 0;
+uint8_t shepardIntensity = 0;
+unsigned long lastButtonSfxEndedMs = 0;
 
 // -----------------------------------------------------------------------------
 // Intro audio (PWM playback on Screen1 after 1 second)
@@ -159,6 +164,8 @@ void maybePlayCloseAnimation(int previousValue);
 void startButtonSfx();
 void stopButtonSfx();
 void updateButtonSfx();
+uint16_t getShepardStepFrequency(uint8_t stepIndex);
+uint16_t getButtonSfxStepDurationMs();
 void queueScreen1IntroAudio();
 void startScreen1IntroAudio();
 void stopScreen1IntroAudio();
@@ -205,10 +212,34 @@ void writePwmDuty(uint8_t duty) {
 
 void stopButtonSfx() {
     writeSfxTone(0);
+    writePwmDuty(128);
 
     buttonSfxActive = false;
     buttonSfxInGap = false;
     buttonSfxStep = 0;
+    lastButtonSfxEndedMs = millis();
+}
+
+uint16_t getShepardStepFrequency(uint8_t stepIndex) {
+    uint8_t index = static_cast<uint8_t>((shepardStepOffset + stepIndex) % shepardFreqCount);
+    uint16_t freq = shepardFreqs[index];
+
+    if (stepIndex >= buttonSfxSequenceLength - 2) {
+        freq = static_cast<uint16_t>(freq * 2);
+    }
+
+    return freq;
+}
+
+uint16_t getButtonSfxStepDurationMs() {
+    uint16_t baseDurationMs = 36;
+    uint16_t intensityReductionMs = static_cast<uint16_t>(shepardIntensity) * 3;
+
+    if (intensityReductionMs >= baseDurationMs - 14) {
+        return 14;
+    }
+
+    return static_cast<uint16_t>(baseDurationMs - intensityReductionMs);
 }
 
 void startButtonSfx() {
@@ -216,14 +247,30 @@ void startButtonSfx() {
         return;
     }
 
-    stopButtonSfx();
+    if (buttonSfxActive) {
+        return;
+    }
+
+    unsigned long now = millis();
+
+    if (now - lastButtonSfxEndedMs > 1200) {
+        shepardIntensity = 0;
+    }
 
     buttonSfxActive = true;
     buttonSfxStep = 0;
     buttonSfxInGap = false;
-    buttonSfxStepStartMs = millis();
+    buttonSfxStepStartMs = now;
+    buttonSfxSequenceLength = static_cast<uint8_t>(4 + (shepardIntensity / 2));
 
-    writeSfxTone(buttonSfxFreqs[0]);
+    writePwmDuty(128);
+    writeSfxTone(getShepardStepFrequency(buttonSfxStep));
+
+    shepardStepOffset = static_cast<uint8_t>((shepardStepOffset + 1) % shepardFreqCount);
+
+    if (shepardIntensity < 8) {
+        shepardIntensity++;
+    }
 }
 
 void updateButtonSfx() {
@@ -234,7 +281,7 @@ void updateButtonSfx() {
     unsigned long now = millis();
 
     if (!buttonSfxInGap) {
-        if (now - buttonSfxStepStartMs < buttonSfxDurationsMs[buttonSfxStep]) {
+        if (now - buttonSfxStepStartMs < getButtonSfxStepDurationMs()) {
             return;
         }
 
@@ -251,7 +298,7 @@ void updateButtonSfx() {
 
     buttonSfxStep++;
 
-    if (buttonSfxStep >= buttonSfxStepCount) {
+    if (buttonSfxStep >= buttonSfxSequenceLength) {
         stopButtonSfx();
         return;
     }
@@ -259,7 +306,8 @@ void updateButtonSfx() {
     buttonSfxInGap = false;
     buttonSfxStepStartMs = now;
 
-    writeSfxTone(buttonSfxFreqs[buttonSfxStep]);
+    writePwmDuty(128);
+    writeSfxTone(getShepardStepFrequency(buttonSfxStep));
 }
 
 void queueScreen1IntroAudio() {
