@@ -56,7 +56,7 @@ const unsigned long debounceMs = 120;
 static constexpr uint8_t SFX_PWM_PIN = 7;
 
 static const uint16_t shepardFreqs[] = {
-    523, 554, 587, 622, 659, 698, 740, 784, 831, 880, 932, 988
+    1319, 1397, 1480, 1568, 1661, 1760, 1865, 1976, 2093, 2217, 2349, 2489
 };
 static constexpr uint8_t shepardFreqCount = sizeof(shepardFreqs) / sizeof(shepardFreqs[0]);
 static constexpr uint16_t buttonSfxGapMs = 8;
@@ -212,6 +212,7 @@ void writePwmDuty(uint8_t duty) {
 
 void stopButtonSfx() {
     writeSfxTone(0);
+    writePwmDuty(128);
 
     buttonSfxActive = false;
     buttonSfxInGap = false;
@@ -262,6 +263,7 @@ void startButtonSfx() {
     buttonSfxStepStartMs = now;
     buttonSfxSequenceLength = static_cast<uint8_t>(4 + (shepardIntensity / 2));
 
+    writePwmDuty(128);
     writeSfxTone(getShepardStepFrequency(buttonSfxStep));
 
     shepardStepOffset = static_cast<uint8_t>((shepardStepOffset + 1) % shepardFreqCount);
@@ -304,6 +306,7 @@ void updateButtonSfx() {
     buttonSfxInGap = false;
     buttonSfxStepStartMs = now;
 
+    writePwmDuty(128);
     writeSfxTone(getShepardStepFrequency(buttonSfxStep));
 }
 
