@@ -185,7 +185,7 @@ void resetShin(){
 // -----------------------------------------------------------------------------
 void writeSfxTone(uint32_t frequency) {
 #if defined(ESP32)
-    ledcWriteTone(SFX_PWM_PIN, frequency);
+    ledcWriteTone(SFX_PWM_CHANNEL, frequency);
 #else
     if (frequency == 0) {
         noTone(SFX_PWM_PIN);
@@ -197,7 +197,7 @@ void writeSfxTone(uint32_t frequency) {
 
 void writePwmDuty(uint8_t duty) {
 #if defined(ESP32)
-    ledcWrite(SFX_PWM_PIN, duty);
+    ledcWrite(SFX_PWM_CHANNEL, duty);
 #else
     analogWrite(SFX_PWM_PIN, duty);
 #endif
@@ -805,7 +805,12 @@ void setup() {
     pinMode(RIGHT_BTN_PIN, INPUT_PULLUP);
 
 #if defined(ESP32)
-    ledcAttach(SFX_PWM_PIN, 2000, 8);
+#if !defined(ESP_ARDUINO_VERSION_MAJOR) || (ESP_ARDUINO_VERSION_MAJOR >= 3)
+    ledcAttachChannel(SFX_PWM_PIN, 20000, 8, SFX_PWM_CHANNEL);
+#else
+    ledcSetup(SFX_PWM_CHANNEL, 20000, 8);
+    ledcAttachPin(SFX_PWM_PIN, SFX_PWM_CHANNEL);
+#endif
 #endif
     pinMode(SFX_PWM_PIN, OUTPUT);
     stopButtonSfx();
