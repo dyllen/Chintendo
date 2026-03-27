@@ -45,6 +45,22 @@ unsigned long lastRightBtnPressTime = 0;
 
 const unsigned long debounceMs = 120;
 
+// -----------------------------------------------------------------------------
+// Button sound effect (PWM on GPIO7)
+// -----------------------------------------------------------------------------
+static constexpr uint8_t SFX_PWM_PIN = 7;
+static constexpr uint8_t SFX_PWM_CHANNEL = 0;
+
+static const uint16_t buttonSfxFreqs[] = {1319, 1568, 2093};
+static const uint16_t buttonSfxDurationsMs[] = {28, 28, 44};
+static constexpr uint8_t buttonSfxStepCount = sizeof(buttonSfxFreqs) / sizeof(buttonSfxFreqs[0]);
+static constexpr uint16_t buttonSfxGapMs = 8;
+
+bool buttonSfxActive = false;
+uint8_t buttonSfxStep = 0;
+unsigned long buttonSfxStepStartMs = 0;
+bool buttonSfxInGap = false;
+
 
 // -----------------------------------------------------------------------------
 // ikuMeter game state
@@ -126,6 +142,9 @@ void handleScreen3Restart();
 void finalizeScreen2Time();
 void maybePlayGanAnimation(int previousValue);
 void maybePlayCloseAnimation(int previousValue);
+void startButtonSfx();
+void stopButtonSfx();
+void updateButtonSfx();
 
 void resetShin(){
     
@@ -145,6 +164,77 @@ void resetShin(){
 // -----------------------------------------------------------------------------
 // Helper functions
 // -----------------------------------------------------------------------------
+void stopButtonSfx() {
+#if defined(ESP32)
+    ledcWriteTone(SFX_PWM_CHANNEL, 0);
+#else
+    noTone(SFX_PWM_PIN);
+#endif
+
+    buttonSfxActive = false;
+    buttonSfxInGap = false;
+    buttonSfxStep = 0;
+}
+
+void startButtonSfx() {
+    stopButtonSfx();
+
+    buttonSfxActive = true;
+    buttonSfxStep = 0;
+    buttonSfxInGap = false;
+    buttonSfxStepStartMs = millis();
+
+#if defined(ESP32)
+    ledcWriteTone(SFX_PWM_CHANNEL, buttonSfxFreqs[0]);
+#else
+    tone(SFX_PWM_PIN, buttonSfxFreqs[0]);
+#endif
+}
+
+void updateButtonSfx() {
+    if (!buttonSfxActive) {
+        return;
+    }
+
+    unsigned long now = millis();
+
+    if (!buttonSfxInGap) {
+        if (now - buttonSfxStepStartMs < buttonSfxDurationsMs[buttonSfxStep]) {
+            return;
+        }
+
+#if defined(ESP32)
+        ledcWriteTone(SFX_PWM_CHANNEL, 0);
+#else
+        noTone(SFX_PWM_PIN);
+#endif
+
+        buttonSfxInGap = true;
+        buttonSfxStepStartMs = now;
+        return;
+    }
+
+    if (now - buttonSfxStepStartMs < buttonSfxGapMs) {
+        return;
+    }
+
+    buttonSfxStep++;
+
+    if (buttonSfxStep >= buttonSfxStepCount) {
+        stopButtonSfx();
+        return;
+    }
+
+    buttonSfxInGap = false;
+    buttonSfxStepStartMs = now;
+
+#if defined(ESP32)
+    ledcWriteTone(SFX_PWM_CHANNEL, buttonSfxFreqs[buttonSfxStep]);
+#else
+    tone(SFX_PWM_PIN, buttonSfxFreqs[buttonSfxStep]);
+#endif
+}
+
 void finalizeScreen2Time() {
     if (screen2TimerRunning) {
         totalScreen2TimeMs += millis() - screen2StartTime;
@@ -531,6 +621,7 @@ void pollPhysicalButtons() {
 
     if (lastLeftBtnState == HIGH && currentLeftBtnState == LOW) {
         if (now - lastLeftBtnPressTime > debounceMs) {
+            startButtonSfx();
             handleLeftButton();
             lastLeftBtnPressTime = now;
         }
@@ -538,6 +629,7 @@ void pollPhysicalButtons() {
 
     if (lastRightBtnState == HIGH && currentRightBtnState == LOW) {
         if (now - lastRightBtnPressTime > debounceMs) {
+            startButtonSfx();
             handleRightButton();
             lastRightBtnPressTime = now;
         }
@@ -609,6 +701,13 @@ void setup() {
     pinMode(LEFT_BTN_PIN, INPUT_PULLUP);
     pinMode(RIGHT_BTN_PIN, INPUT_PULLUP);
 
+#if defined(ESP32)
+    ledcSetup(SFX_PWM_CHANNEL, 2000, 8);
+    ledcAttachPin(SFX_PWM_PIN, SFX_PWM_CHANNEL);
+#endif
+    pinMode(SFX_PWM_PIN, OUTPUT);
+    stopButtonSfx();
+
     updateScreenTimers();
 
     last_tick_ms = millis();
@@ -623,6 +722,7 @@ void loop() {
     lv_timer_handler();
     updateScreenTimers();
     pollPhysicalButtons();
+    updateButtonSfx();
 
     if (lv_scr_act() == ui_Screen2 && !gameWon) {
         unsigned long currentDecayInterval = getDecayInterval();
