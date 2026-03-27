@@ -54,16 +54,17 @@ const unsigned long debounceMs = 120;
 // -----------------------------------------------------------------------------
 static constexpr uint8_t SFX_PWM_PIN = 7;
 
-// Shepard-style rising illusion: each button press advances the semitone offset,
-// while each SFX contains a fast upward run of notes. This keeps climbing in
-// pitch and intensity across presses without an obvious hard reset.
-static constexpr float SHEPARD_BASE_HZ = 55.0f;   // A1
+// Cute Shepard-style rising illusion: use a bright major-pentatonic contour so
+// each press feels sweeter while still giving an "always climbing" intensity.
+static constexpr float SHEPARD_BASE_HZ = 261.63f; // C4
 static constexpr uint8_t SHEPARD_NOTES_PER_OCTAVE = 12;
 static constexpr uint8_t SHEPARD_OCTAVE_SPAN = 3;
 static constexpr uint8_t buttonSfxStepCount = 4;
-static constexpr uint8_t buttonSfxSemitoneStride = 2;
-static constexpr uint16_t buttonSfxStepDurationMs = 26;
-static constexpr uint16_t buttonSfxGapMs = 5;
+static constexpr uint8_t buttonSfxScaleStride = 1;
+static constexpr uint8_t SHEPARD_SCALE_LENGTH = 5;
+static constexpr uint8_t SHEPARD_CUTE_SCALE[SHEPARD_SCALE_LENGTH] = {0, 2, 4, 7, 9}; // major pentatonic
+static constexpr uint16_t buttonSfxStepDurationMs = 22;
+static constexpr uint16_t buttonSfxGapMs = 8;
 
 bool buttonSfxActive = false;
 uint8_t buttonSfxStep = 0;
@@ -195,24 +196,28 @@ void stopButtonSfx() {
 }
 
 uint16_t getShepardFrequency(uint8_t stepInPress) {
-    const uint16_t noteIndex = shepardPhase + (stepInPress * buttonSfxSemitoneStride);
-    const uint8_t octave = (noteIndex / SHEPARD_NOTES_PER_OCTAVE) % SHEPARD_OCTAVE_SPAN;
-    const float semitoneInOctave = static_cast<float>(noteIndex % SHEPARD_NOTES_PER_OCTAVE);
-    const float octaveScale = static_cast<float>(1 << octave);
-    const float frequency = SHEPARD_BASE_HZ * octaveScale * powf(2.0f, semitoneInOctave / SHEPARD_NOTES_PER_OCTAVE);
+    const uint16_t noteIndex = shepardPhase + (stepInPress * buttonSfxScaleStride);
+    const uint8_t octave = (noteIndex / SHEPARD_SCALE_LENGTH) % SHEPARD_OCTAVE_SPAN;
+    const uint8_t scaleIndex = noteIndex % SHEPARD_SCALE_LENGTH;
+    const float semitones = static_cast<float>(SHEPARD_CUTE_SCALE[scaleIndex] + (octave * SHEPARD_NOTES_PER_OCTAVE));
+    const float frequency = SHEPARD_BASE_HZ * powf(2.0f, semitones / SHEPARD_NOTES_PER_OCTAVE);
 
     return static_cast<uint16_t>(roundf(frequency));
 }
 
 void startButtonSfx() {
-    stopButtonSfx();
+    // Don't restart while a tone is already running; let the current SFX
+    // finish so rapid button mashing doesn't chop/cut off the sound.
+    if (buttonSfxActive) {
+        return;
+    }
 
     buttonSfxActive = true;
     buttonSfxStep = 0;
     buttonSfxInGap = false;
     buttonSfxStepStartMs = millis();
 
-    shepardPhase = (shepardPhase + 1) % (SHEPARD_NOTES_PER_OCTAVE * SHEPARD_OCTAVE_SPAN);
+    shepardPhase = (shepardPhase + 1) % (SHEPARD_SCALE_LENGTH * SHEPARD_OCTAVE_SPAN);
     writeSfxTone(getShepardFrequency(0));
 }
 
