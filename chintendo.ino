@@ -54,7 +54,6 @@ const unsigned long debounceMs = 120;
 // Button sound effect (PWM on GPIO7)
 // -----------------------------------------------------------------------------
 static constexpr uint8_t SFX_PWM_PIN = 7;
-static constexpr uint8_t SFX_PWM_CHANNEL = 0;
 
 static const uint16_t buttonSfxFreqs[] = {1319, 1568, 2093};
 static const uint16_t buttonSfxDurationsMs[] = {28, 28, 44};
@@ -76,13 +75,6 @@ unsigned long screen1EnteredMs = 0;
 uint32_t introAudioSampleIndex = 0;
 uint32_t introNextSampleUs = 0;
 lv_obj_t* lastAudioScreen = nullptr;
-
-#if defined(ESP32) && defined(ESP_ARDUINO_VERSION_MAJOR) && (ESP_ARDUINO_VERSION_MAJOR >= 3)
-static constexpr bool useEsp32LedcPinApi = true;
-#else
-static constexpr bool useEsp32LedcPinApi = false;
-#endif
-
 
 // -----------------------------------------------------------------------------
 // ikuMeter game state
@@ -193,11 +185,7 @@ void resetShin(){
 // -----------------------------------------------------------------------------
 void writeSfxTone(uint32_t frequency) {
 #if defined(ESP32)
-    if (useEsp32LedcPinApi) {
-        ledcWriteTone(SFX_PWM_PIN, frequency);
-    } else {
-        ledcWriteTone(SFX_PWM_CHANNEL, frequency);
-    }
+    ledcWriteTone(SFX_PWM_PIN, frequency);
 #else
     if (frequency == 0) {
         noTone(SFX_PWM_PIN);
@@ -209,11 +197,7 @@ void writeSfxTone(uint32_t frequency) {
 
 void writePwmDuty(uint8_t duty) {
 #if defined(ESP32)
-    if (useEsp32LedcPinApi) {
-        ledcWrite(SFX_PWM_PIN, duty);
-    } else {
-        ledcWrite(SFX_PWM_CHANNEL, duty);
-    }
+    ledcWrite(SFX_PWM_PIN, duty);
 #else
     analogWrite(SFX_PWM_PIN, duty);
 #endif
@@ -821,12 +805,7 @@ void setup() {
     pinMode(RIGHT_BTN_PIN, INPUT_PULLUP);
 
 #if defined(ESP32)
-    if (useEsp32LedcPinApi) {
-        ledcAttach(SFX_PWM_PIN, 2000, 8);
-    } else {
-        ledcSetup(SFX_PWM_CHANNEL, 2000, 8);
-        ledcAttachPin(SFX_PWM_PIN, SFX_PWM_CHANNEL);
-    }
+    ledcAttach(SFX_PWM_PIN, 2000, 8);
 #endif
     pinMode(SFX_PWM_PIN, OUTPUT);
     stopButtonSfx();
