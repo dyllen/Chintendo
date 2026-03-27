@@ -4,6 +4,10 @@
 #include <Adafruit_SSD1351.h>
 #include <math.h>
 
+#if defined(ESP32) && __has_include(<esp_arduino_version.h>)
+#include <esp_arduino_version.h>
+#endif
+
 #ifndef LV_COLOR_16_SWAP
 #define LV_COLOR_16_SWAP 1
 #endif
@@ -60,6 +64,12 @@ bool buttonSfxActive = false;
 uint8_t buttonSfxStep = 0;
 unsigned long buttonSfxStepStartMs = 0;
 bool buttonSfxInGap = false;
+
+#if defined(ESP32) && defined(ESP_ARDUINO_VERSION_MAJOR) && (ESP_ARDUINO_VERSION_MAJOR >= 3)
+static constexpr bool useEsp32LedcPinApi = true;
+#else
+static constexpr bool useEsp32LedcPinApi = false;
+#endif
 
 
 // -----------------------------------------------------------------------------
@@ -164,12 +174,24 @@ void resetShin(){
 // -----------------------------------------------------------------------------
 // Helper functions
 // -----------------------------------------------------------------------------
-void stopButtonSfx() {
+void writeSfxTone(uint32_t frequency) {
 #if defined(ESP32)
-    ledcWriteTone(SFX_PWM_CHANNEL, 0);
+    if (useEsp32LedcPinApi) {
+        ledcWriteTone(SFX_PWM_PIN, frequency);
+    } else {
+        ledcWriteTone(SFX_PWM_CHANNEL, frequency);
+    }
 #else
-    noTone(SFX_PWM_PIN);
+    if (frequency == 0) {
+        noTone(SFX_PWM_PIN);
+    } else {
+        tone(SFX_PWM_PIN, frequency);
+    }
 #endif
+}
+
+void stopButtonSfx() {
+    writeSfxTone(0);
 
     buttonSfxActive = false;
     buttonSfxInGap = false;
@@ -184,11 +206,7 @@ void startButtonSfx() {
     buttonSfxInGap = false;
     buttonSfxStepStartMs = millis();
 
-#if defined(ESP32)
-    ledcWriteTone(SFX_PWM_CHANNEL, buttonSfxFreqs[0]);
-#else
-    tone(SFX_PWM_PIN, buttonSfxFreqs[0]);
-#endif
+    writeSfxTone(buttonSfxFreqs[0]);
 }
 
 void updateButtonSfx() {
@@ -203,11 +221,7 @@ void updateButtonSfx() {
             return;
         }
 
-#if defined(ESP32)
-        ledcWriteTone(SFX_PWM_CHANNEL, 0);
-#else
-        noTone(SFX_PWM_PIN);
-#endif
+        writeSfxTone(0);
 
         buttonSfxInGap = true;
         buttonSfxStepStartMs = now;
@@ -228,11 +242,7 @@ void updateButtonSfx() {
     buttonSfxInGap = false;
     buttonSfxStepStartMs = now;
 
-#if defined(ESP32)
-    ledcWriteTone(SFX_PWM_CHANNEL, buttonSfxFreqs[buttonSfxStep]);
-#else
-    tone(SFX_PWM_PIN, buttonSfxFreqs[buttonSfxStep]);
-#endif
+    writeSfxTone(buttonSfxFreqs[buttonSfxStep]);
 }
 
 void finalizeScreen2Time() {
@@ -702,8 +712,12 @@ void setup() {
     pinMode(RIGHT_BTN_PIN, INPUT_PULLUP);
 
 #if defined(ESP32)
-    ledcSetup(SFX_PWM_CHANNEL, 2000, 8);
-    ledcAttachPin(SFX_PWM_PIN, SFX_PWM_CHANNEL);
+    if (useEsp32LedcPinApi) {
+        ledcAttach(SFX_PWM_PIN, 2000, 8);
+    } else {
+        ledcSetup(SFX_PWM_CHANNEL, 2000, 8);
+        ledcAttachPin(SFX_PWM_PIN, SFX_PWM_CHANNEL);
+    }
 #endif
     pinMode(SFX_PWM_PIN, OUTPUT);
     stopButtonSfx();
