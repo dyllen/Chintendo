@@ -54,7 +54,6 @@ const unsigned long debounceMs = 120;
 // Button sound effect (PWM on GPIO7)
 // -----------------------------------------------------------------------------
 static constexpr uint8_t SFX_PWM_PIN = 7;
-static constexpr uint8_t SFX_PWM_CHANNEL = 0;
 
 static const uint16_t buttonSfxFreqs[] = {1319, 1568, 2093};
 static const uint16_t buttonSfxDurationsMs[] = {28, 28, 44};
