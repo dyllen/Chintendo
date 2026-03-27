@@ -72,10 +72,20 @@ unsigned long buttonSfxStepStartMs = 0;
 bool buttonSfxInGap = false;
 uint16_t shepardPhase = 0;
 
-static const uint16_t winSfxFreqs[] = {1047, 1319, 1568, 2093}; // C6 E6 G6 C7
-static const uint16_t winSfxDurationsMs[] = {80, 80, 100, 220};
+// Longer, more melodic victory phrase (C major) with a held resolving note.
+static const uint16_t winSfxFreqs[] = {
+    784,  // G5
+    880,  // A5
+    1047, // C6
+    1175, // D6
+    1319, // E6
+    1175, // D6
+    1568, // G6
+    2093  // C7
+};
+static const uint16_t winSfxDurationsMs[] = {90, 90, 110, 110, 130, 110, 150, 320};
 static constexpr uint8_t winSfxStepCount = sizeof(winSfxFreqs) / sizeof(winSfxFreqs[0]);
-static constexpr uint16_t winSfxGapMs = 14;
+static constexpr uint16_t winSfxGapMs = 16;
 
 bool winSfxActive = false;
 uint8_t winSfxStep = 0;
