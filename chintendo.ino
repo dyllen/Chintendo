@@ -54,15 +54,23 @@ const unsigned long debounceMs = 120;
 // -----------------------------------------------------------------------------
 static constexpr uint8_t SFX_PWM_PIN = 7;
 
-static const uint16_t buttonSfxFreqs[] = {1319, 1568, 2093};
-static const uint16_t buttonSfxDurationsMs[] = {28, 28, 44};
-static constexpr uint8_t buttonSfxStepCount = sizeof(buttonSfxFreqs) / sizeof(buttonSfxFreqs[0]);
+// Cute Shepard-style rising illusion: use a bright major-pentatonic contour so
+// each press feels sweeter while still giving an "always climbing" intensity.
+static constexpr float SHEPARD_BASE_HZ = 261.63f; // C4
+static constexpr uint8_t SHEPARD_NOTES_PER_OCTAVE = 12;
+static constexpr uint8_t SHEPARD_OCTAVE_SPAN = 3;
+static constexpr uint8_t buttonSfxStepCount = 4;
+static constexpr uint8_t buttonSfxScaleStride = 1;
+static constexpr uint8_t SHEPARD_SCALE_LENGTH = 5;
+static constexpr uint8_t SHEPARD_CUTE_SCALE[SHEPARD_SCALE_LENGTH] = {0, 2, 4, 7, 9}; // major pentatonic
+static constexpr uint16_t buttonSfxStepDurationMs = 22;
 static constexpr uint16_t buttonSfxGapMs = 8;
 
 bool buttonSfxActive = false;
 uint8_t buttonSfxStep = 0;
 unsigned long buttonSfxStepStartMs = 0;
 bool buttonSfxInGap = false;
+uint16_t shepardPhase = 0;
 
 // -----------------------------------------------------------------------------
 // ikuMeter game state
@@ -144,6 +152,7 @@ void handleScreen3Restart();
 void finalizeScreen2Time();
 void maybePlayGanAnimation(int previousValue);
 void maybePlayCloseAnimation(int previousValue);
+uint16_t getShepardFrequency(uint8_t stepInPress);
 void startButtonSfx();
 void stopButtonSfx();
 void updateButtonSfx();
@@ -186,15 +195,30 @@ void stopButtonSfx() {
     buttonSfxStep = 0;
 }
 
+uint16_t getShepardFrequency(uint8_t stepInPress) {
+    const uint16_t noteIndex = shepardPhase + (stepInPress * buttonSfxScaleStride);
+    const uint8_t octave = (noteIndex / SHEPARD_SCALE_LENGTH) % SHEPARD_OCTAVE_SPAN;
+    const uint8_t scaleIndex = noteIndex % SHEPARD_SCALE_LENGTH;
+    const float semitones = static_cast<float>(SHEPARD_CUTE_SCALE[scaleIndex] + (octave * SHEPARD_NOTES_PER_OCTAVE));
+    const float frequency = SHEPARD_BASE_HZ * powf(2.0f, semitones / SHEPARD_NOTES_PER_OCTAVE);
+
+    return static_cast<uint16_t>(roundf(frequency));
+}
+
 void startButtonSfx() {
-    stopButtonSfx();
+    // Don't restart while a tone is already running; let the current SFX
+    // finish so rapid button mashing doesn't chop/cut off the sound.
+    if (buttonSfxActive) {
+        return;
+    }
 
     buttonSfxActive = true;
     buttonSfxStep = 0;
     buttonSfxInGap = false;
     buttonSfxStepStartMs = millis();
 
-    writeSfxTone(buttonSfxFreqs[0]);
+    shepardPhase = (shepardPhase + 1) % (SHEPARD_SCALE_LENGTH * SHEPARD_OCTAVE_SPAN);
+    writeSfxTone(getShepardFrequency(0));
 }
 
 void updateButtonSfx() {
@@ -205,7 +229,7 @@ void updateButtonSfx() {
     unsigned long now = millis();
 
     if (!buttonSfxInGap) {
-        if (now - buttonSfxStepStartMs < buttonSfxDurationsMs[buttonSfxStep]) {
+        if (now - buttonSfxStepStartMs < buttonSfxStepDurationMs) {
             return;
         }
 
@@ -230,7 +254,7 @@ void updateButtonSfx() {
     buttonSfxInGap = false;
     buttonSfxStepStartMs = now;
 
-    writeSfxTone(buttonSfxFreqs[buttonSfxStep]);
+    writeSfxTone(getShepardFrequency(buttonSfxStep));
 }
 
 void finalizeScreen2Time() {
