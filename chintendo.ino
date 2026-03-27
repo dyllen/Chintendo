@@ -568,7 +568,7 @@ void updateScreenTimers() {
             screen1EnterTime = millis();
             screen1TimerStarted = true;
             screen1CoinPlayed = false;
-        } else if (!screen1CoinPlayed && millis() - screen1EnterTime >= 1000) {
+        } else if (!screen1CoinPlayed && millis() - screen1EnterTime >= 2000) {
             startCoinSfx();
             screen1CoinPlayed = true;
         }
