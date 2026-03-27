@@ -13,6 +13,7 @@
 #endif
 
 #include <lvgl.h>
+#include "nintendo-audio.h"
 
 // -----------------------------------------------------------------------------
 // Display + pinout
@@ -53,7 +54,6 @@ const unsigned long debounceMs = 120;
 // Button sound effect (PWM on GPIO7)
 // -----------------------------------------------------------------------------
 static constexpr uint8_t SFX_PWM_PIN = 7;
-static constexpr uint8_t SFX_PWM_CHANNEL = 0;
 
 static const uint16_t buttonSfxFreqs[] = {1319, 1568, 2093};
 static const uint16_t buttonSfxDurationsMs[] = {28, 28, 44};
@@ -65,12 +65,16 @@ uint8_t buttonSfxStep = 0;
 unsigned long buttonSfxStepStartMs = 0;
 bool buttonSfxInGap = false;
 
-#if defined(ESP32) && defined(ESP_ARDUINO_VERSION_MAJOR) && (ESP_ARDUINO_VERSION_MAJOR >= 3)
-static constexpr bool useEsp32LedcPinApi = true;
-#else
-static constexpr bool useEsp32LedcPinApi = false;
-#endif
-
+// -----------------------------------------------------------------------------
+// Intro audio (PWM playback on Screen1 after 1 second)
+// -----------------------------------------------------------------------------
+bool introAudioQueued = false;
+bool introAudioPlaying = false;
+bool introAudioPlayedOnce = false;
+unsigned long screen1EnteredMs = 0;
+uint32_t introAudioSampleIndex = 0;
+uint32_t introNextSampleUs = 0;
+lv_obj_t* lastAudioScreen = nullptr;
 
 // -----------------------------------------------------------------------------
 // ikuMeter game state
@@ -155,6 +159,11 @@ void maybePlayCloseAnimation(int previousValue);
 void startButtonSfx();
 void stopButtonSfx();
 void updateButtonSfx();
+void queueScreen1IntroAudio();
+void startScreen1IntroAudio();
+void stopScreen1IntroAudio();
+void updateScreen1IntroAudio();
+void writePwmDuty(uint8_t duty);
 
 void resetShin(){
     
@@ -176,17 +185,21 @@ void resetShin(){
 // -----------------------------------------------------------------------------
 void writeSfxTone(uint32_t frequency) {
 #if defined(ESP32)
-    if (useEsp32LedcPinApi) {
-        ledcWriteTone(SFX_PWM_PIN, frequency);
-    } else {
-        ledcWriteTone(SFX_PWM_CHANNEL, frequency);
-    }
+    ledcWriteTone(0, frequency);
 #else
     if (frequency == 0) {
         noTone(SFX_PWM_PIN);
     } else {
         tone(SFX_PWM_PIN, frequency);
     }
+#endif
+}
+
+void writePwmDuty(uint8_t duty) {
+#if defined(ESP32)
+    ledcWrite(0, duty);
+#else
+    analogWrite(SFX_PWM_PIN, duty);
 #endif
 }
 
@@ -199,6 +212,10 @@ void stopButtonSfx() {
 }
 
 void startButtonSfx() {
+    if (introAudioPlaying) {
+        return;
+    }
+
     stopButtonSfx();
 
     buttonSfxActive = true;
@@ -243,6 +260,78 @@ void updateButtonSfx() {
     buttonSfxStepStartMs = now;
 
     writeSfxTone(buttonSfxFreqs[buttonSfxStep]);
+}
+
+void queueScreen1IntroAudio() {
+    if (introAudioPlayedOnce) {
+        return;
+    }
+
+    introAudioQueued = true;
+    screen1EnteredMs = millis();
+}
+
+void startScreen1IntroAudio() {
+    if (introAudioPlayedOnce || introAudioPlaying) {
+        return;
+    }
+
+    stopButtonSfx();
+
+    introAudioPlaying = true;
+    introAudioQueued = false;
+    introAudioSampleIndex = 0;
+    introNextSampleUs = micros();
+}
+
+void stopScreen1IntroAudio() {
+    if (!introAudioPlaying) {
+        return;
+    }
+
+    introAudioPlaying = false;
+    writePwmDuty(128);
+}
+
+void updateScreen1IntroAudio() {
+    lv_obj_t* currentScreen = lv_scr_act();
+
+    if (currentScreen != lastAudioScreen) {
+        if (currentScreen == ui_Screen1) {
+            queueScreen1IntroAudio();
+        } else {
+            introAudioQueued = false;
+            stopScreen1IntroAudio();
+        }
+        lastAudioScreen = currentScreen;
+    }
+
+    if (introAudioQueued && !introAudioPlaying) {
+        if (millis() - screen1EnteredMs >= 1000) {
+            startScreen1IntroAudio();
+        }
+    }
+
+    if (!introAudioPlaying) {
+        return;
+    }
+
+    uint32_t nowUs = micros();
+    uint32_t samplePeriodUs = 1000000UL / sampleRate;
+
+    while ((int32_t)(nowUs - introNextSampleUs) >= 0) {
+        if (introAudioSampleIndex >= sampleCount) {
+            introAudioPlaying = false;
+            introAudioPlayedOnce = true;
+            writePwmDuty(128);
+            return;
+        }
+
+        int16_t sample = static_cast<int16_t>(samples[introAudioSampleIndex++]) + 128;
+        writePwmDuty(static_cast<uint8_t>(sample));
+
+        introNextSampleUs += samplePeriodUs;
+    }
 }
 
 void finalizeScreen2Time() {
@@ -631,7 +720,9 @@ void pollPhysicalButtons() {
 
     if (lastLeftBtnState == HIGH && currentLeftBtnState == LOW) {
         if (now - lastLeftBtnPressTime > debounceMs) {
-            startButtonSfx();
+            if (lv_scr_act() != ui_Screen1) {
+                startButtonSfx();
+            }
             handleLeftButton();
             lastLeftBtnPressTime = now;
         }
@@ -639,7 +730,9 @@ void pollPhysicalButtons() {
 
     if (lastRightBtnState == HIGH && currentRightBtnState == LOW) {
         if (now - lastRightBtnPressTime > debounceMs) {
-            startButtonSfx();
+            if (lv_scr_act() != ui_Screen1) {
+                startButtonSfx();
+            }
             handleRightButton();
             lastRightBtnPressTime = now;
         }
@@ -712,15 +805,17 @@ void setup() {
     pinMode(RIGHT_BTN_PIN, INPUT_PULLUP);
 
 #if defined(ESP32)
-    if (useEsp32LedcPinApi) {
-        ledcAttach(SFX_PWM_PIN, 2000, 8);
-    } else {
-        ledcSetup(SFX_PWM_CHANNEL, 2000, 8);
-        ledcAttachPin(SFX_PWM_PIN, SFX_PWM_CHANNEL);
-    }
+#if !defined(ESP_ARDUINO_VERSION_MAJOR) || (ESP_ARDUINO_VERSION_MAJOR >= 3)
+    ledcAttachChannel(SFX_PWM_PIN, 20000, 8, 0);
+#else
+    ledcSetup(0, 20000, 8);
+    ledcAttachPin(SFX_PWM_PIN, 0);
+#endif
 #endif
     pinMode(SFX_PWM_PIN, OUTPUT);
     stopButtonSfx();
+    writePwmDuty(128);
+    queueScreen1IntroAudio();
 
     updateScreenTimers();
 
@@ -737,6 +832,7 @@ void loop() {
     updateScreenTimers();
     pollPhysicalButtons();
     updateButtonSfx();
+    updateScreen1IntroAudio();
 
     if (lv_scr_act() == ui_Screen2 && !gameWon) {
         unsigned long currentDecayInterval = getDecayInterval();
